@@ -33,18 +33,7 @@ mm_per_cm = 1./10
 
 from .target_graphics import *
 
-target_colors = {
-"yellow": (1,1,0,0.75),
-"magenta": (1,0,1,0.75),
-"purple":(0.608,0.188,1,0.75),
-"dodgerblue": (0.118,0.565,1,0.75),
-"teal":(0,0.502,0.502,0.75),
-"olive":(0.420,0.557,0.137,.75),
-"juicyorange": (1,0.502,0.,0.75),
-"hotpink":(1,0.0,0.606,.75),
-"lightwood": (0.627,0.322,0.176,0.75),
-"elephant":(0.409,0.409,0.409,0.5),
-"green":(0., 1., 0., 0.5)}
+from .target_capture_task import TargetCapture
 
 
 class ManualControlMulti(Sequence, Window):
@@ -80,7 +69,7 @@ class ManualControlMulti(Sequence, Window):
     target_color = (1,0,0,.5)
     target_index = -1 # Helper variable to keep track of which target to display within a trial
     tries = 0 # Helper variable to keep track of the number of failed attempts at a given trial.
-    
+
     cursor_visible = False # Determines when to hide the cursor.
     no_data_count = 0 # Counter for number of missing data frames in a row
     scale_factor = 3.0 #scale factor for converting hand movement to screen movement (1cm hand movement = 3.5cm cursor movement)
@@ -99,7 +88,7 @@ class ManualControlMulti(Sequence, Window):
     # Runtime settable traits
     reward_time = traits.Float(.5, desc="Length of juice reward")
     target_radius = traits.Float(2, desc="Radius of targets in cm")
-    
+
     hold_time = traits.Float(.2, desc="Length of hold required at targets")
     hold_penalty_time = traits.Float(1, desc="Length of penalty time for target hold error")
     timeout_time = traits.Float(10, desc="Time allowed to go between targets")
@@ -112,12 +101,12 @@ class ManualControlMulti(Sequence, Window):
     # 5/19/13 after LED #0 broke. All data files saved before this date
     # have LED #0 controlling the cursor.
 
-    plant_hide_rate = traits.Float(0.0, desc='If the plant is visible, specifies a percentage of trials where it will be hidden')    
+    plant_hide_rate = traits.Float(0.0, desc='If the plant is visible, specifies a percentage of trials where it will be hidden')
     plant_type_options = list(plantlist.keys())
     plant_type = traits.OptionsList(*plantlist, bmi3d_input_options=list(plantlist.keys()))
     plant_visible = traits.Bool(True, desc='Specifies whether entire plant is displayed or just endpoint')
     cursor_radius = traits.Float(.5, desc="Radius of cursor")
-    
+
     def __init__(self, *args, **kwargs):
         super(ManualControlMulti, self).__init__(*args, **kwargs)
         self.cursor_visible = True
@@ -142,7 +131,7 @@ class ManualControlMulti(Sequence, Window):
             for target in self.targets:
                 for model in target.graphics_models:
                     self.add_model(model)
-        
+
         # Initialize target location variable
         self.target_location = np.array([0, 0, 0])
 
@@ -177,7 +166,7 @@ class ManualControlMulti(Sequence, Window):
             self.task_data[key] = plant_data[key]
 
         super(ManualControlMulti, self)._cycle()
-        
+
     def move_effector(self):
         ''' Sets the plant configuration based on motiontracker data. For manual control, uses
         motiontracker data. If no motiontracker data available, returns None'''
@@ -211,7 +200,7 @@ class ManualControlMulti(Sequence, Window):
 
     def run(self):
         '''
-        See experiment.Experiment.run for documentation. 
+        See experiment.Experiment.run for documentation.
         '''
         # Fire up the plant. For virtual/simulation plants, this does little/nothing.
         self.plant.start()
@@ -249,7 +238,7 @@ class ManualControlMulti(Sequence, Window):
         cursor_pos = self.plant.get_endpoint_pos()
         d = np.linalg.norm(cursor_pos - self.target_location)
         return d <= (self.target_radius - self.cursor_radius)
-        
+
     def _test_leave_early(self, ts):
         '''
         return true if cursor moves outside the exit radius
@@ -299,20 +288,20 @@ class ManualControlMulti(Sequence, Window):
 
     def _start_target(self):
         self.target_index += 1
+        self.target_location = self.targs[self.target_index]
 
         #move a target to current location (target1 and target2 alternate moving) and set location attribute
         target = self.targets[self.target_index % 2]
-        self.target_location = self.targs[self.target_index]
         target.move_to_position(self.target_location)
         target.cue_trial_start()
 
     def _start_hold(self):
         #make next target visible unless this is the final target in the trial
         idx = (self.target_index + 1)
-        if idx < self.chain_length: 
+        if idx < self.chain_length:
             target = self.targets[idx % 2]
             target.move_to_position(self.targs[idx])
-    
+
     def _end_hold(self):
         # change current target color to green
         self.targets[self.target_index % 2].cue_trial_end_success()
@@ -324,7 +313,7 @@ class ManualControlMulti(Sequence, Window):
 
         self.tries += 1
         self.target_index = -1
-    
+
     def _start_timeout_penalty(self):
     	#hide targets
         for target in self.targets:
@@ -372,7 +361,7 @@ class ManualControlMulti(Sequence, Window):
         coord = [-float(edge_length)/2, float(edge_length)/2]
         from itertools import product
         target_locs = [(x, y, z) for x, y, z in product(coord, coord, coord)]
-        
+
         n_corners_in_cube = 8
         pairs = np.zeros([length, 2, 3])
 
@@ -407,9 +396,9 @@ class ManualControlMulti(Sequence, Window):
 
         '''
 
-        # Choose a random sequence of points on the edge of a circle of radius 
+        # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
-        
+
         theta = []
         for i in range(nblocks):
             temp = np.arange(0, 2*np.pi, 2*np.pi/ntargets)
@@ -421,12 +410,12 @@ class ManualControlMulti(Sequence, Window):
         x = distance*np.cos(theta)
         y = np.zeros(len(theta))
         z = distance*np.sin(theta)
-        
+
         pairs = np.zeros([len(theta), 2, 3])
         pairs[:,1,:] = np.vstack([x, y, z]).T
-        
+
         return pairs
-   
+
     @staticmethod
     def centerout_2D_discrete_offset(nblocks=100, ntargets=8, boundaries=(-18,18,-12,12),
         distance=5,xoffset = -8, zoffset = 0, centeroffset = -8):
@@ -451,9 +440,9 @@ class ManualControlMulti(Sequence, Window):
 
         '''
 
-        # Choose a random sequence of points on the edge of a circle of radius 
+        # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
-        
+
         theta = []
         for i in range(nblocks):
             temp = np.arange(0, 2*np.pi, 2*np.pi/ntargets)
@@ -465,11 +454,11 @@ class ManualControlMulti(Sequence, Window):
         x = distance*np.cos(theta)+xoffset
         y = np.zeros(len(theta))
         z = distance*np.sin(theta)+zoffset
-        
+
         pairs = np.zeros([len(theta), 2, 3])
         pairs[:,1,:] = np.vstack([x, y, z]).T
         pairs[:,0,:] = np.array([centeroffset, 0, 0])
-        
+
         return pairs
 
     @staticmethod
@@ -516,7 +505,7 @@ class ManualControlMulti(Sequence, Window):
 
         pairs = np.zeros([len(theta), 2, 3])
         pairs[:,1,:] = np.vstack([x, y, z]).T
-        
+
         return pairs
 
     @staticmethod
@@ -525,7 +514,7 @@ class ManualControlMulti(Sequence, Window):
         '''Same as centerout_2D_discrete, but rotates position of targets by 'rotate_deg'.
            For example, if you wanted only 1 target, but sometimes wanted it at pi and sometiems at 3pi/2,
              you could rotate it by 90 degrees'''
-        
+
         theta = []
         for i in range(nblocks):
             temp = np.arange(0, np.pi, np.pi/ntargets)
@@ -537,19 +526,19 @@ class ManualControlMulti(Sequence, Window):
         x = distance*np.cos(theta)
         y = np.zeros(len(theta))
         z = distance*np.sin(theta)
-        
+
         pairs = np.zeros([len(theta), 2, 3])
         pairs[:,1,:] = np.vstack([x, y, z]).T
-        
+
         return pairs
-    
+
     @staticmethod
     def centerout_2D_discrete_rot(nblocks=100, ntargets=8, boundaries=(-18,18,-12,12),
         distance=10,rotate_deg=0):
         '''Same as centerout_2D_discrete, but rotates position of targets by 'rotate_deg'.
            For example, if you wanted only 1 target, but sometimes wanted it at pi and sometiems at 3pi/2,
              you could rotate it by 90 degrees'''
-        
+
         theta = []
         for i in range(nblocks):
             temp = np.arange(0, 2*np.pi, 2*np.pi/ntargets)
@@ -562,10 +551,10 @@ class ManualControlMulti(Sequence, Window):
         x = distance*np.cos(theta)
         y = np.zeros(len(theta))
         z = distance*np.sin(theta)
-        
+
         pairs = np.zeros([len(theta), 2, 3])
         pairs[:,1,:] = np.vstack([x, y, z]).T
-        
+
         return pairs
 
     @staticmethod
@@ -591,7 +580,7 @@ class ManualControlMulti(Sequence, Window):
 
         '''
 
-        # Choose a random sequence of points on the edge of a circle of radius 
+        # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
         target_set = []
         angles = np.arange(0, 2*np.pi, 2*np.pi/n_angles)
@@ -603,7 +592,7 @@ class ManualControlMulti(Sequence, Window):
 
         target_set = np.vstack(target_set)
         n_targets = len(target_set)
-        
+
 
         periph_target_list = []
         for k in range(n_blocks):
@@ -613,10 +602,10 @@ class ManualControlMulti(Sequence, Window):
 
         periph_target_list = np.vstack(periph_target_list)
 
-        
+
         pairs = np.zeros([len(periph_target_list), 2, 3])
         pairs[:,1,:] = periph_target_list#np.vstack([x, y, z]).T
-        
+
         return pairs
 
     @staticmethod
@@ -634,47 +623,47 @@ class ManualControlMulti(Sequence, Window):
 
     @staticmethod
     def centerout_2D_discrete_randorder(nblocks=100, ntargets=8, boundaries=(-18,18,-12,12),
-        distance=10):                                                                 
-        '''                                                                           
-                                                                                      
-        Generates a sequence of 2D (x and z) target pairs with the first target       
-        always at the origin, totally randomized instead of block randomized.         
-                                                                                      
-        Parameters                                                                    
-        ----------                                                                    
-        length : int                                                                  
-            The number of target pairs in the sequence.                               
-        boundaries: 6 element Tuple                                                   
-            The limits of the allowed target locations (-x, x, -z, z)                 
-        distance : float                                                              
-            The distance in cm between the targets in a pair.                         
-                                                                                      
-        Returns                                                                       
-        -------                                                                       
-        pairs : [nblocks*ntargets x 2 x 3] array of pairs of target locations         
-                                                                                      
-                                                                                      
-        '''                                                                           
-                                                                                      
-        # Choose a random sequence of points on the edge of a circle of radius        
-        # "distance"                                                                  
-                                                                                      
-        theta = []                                                                    
-        for i in range(nblocks):                                                      
+        distance=10):
+        '''
+
+        Generates a sequence of 2D (x and z) target pairs with the first target
+        always at the origin, totally randomized instead of block randomized.
+
+        Parameters
+        ----------
+        length : int
+            The number of target pairs in the sequence.
+        boundaries: 6 element Tuple
+            The limits of the allowed target locations (-x, x, -z, z)
+        distance : float
+            The distance in cm between the targets in a pair.
+
+        Returns
+        -------
+        pairs : [nblocks*ntargets x 2 x 3] array of pairs of target locations
+
+
+        '''
+
+        # Choose a random sequence of points on the edge of a circle of radius
+        # "distance"
+
+        theta = []
+        for i in range(nblocks):
             temp = np.arange(0, 2*np.pi, 2*np.pi/ntargets)
-            np.random.shuffle(temp)                                                   
-            theta = theta + [temp]                                                    
-        theta = np.hstack(theta)                                                      
-        np.random.shuffle(theta)                                                      
-                                                                                      
-                                                                                      
-        x = distance*np.cos(theta)                                                    
-        y = np.zeros(len(theta))                                                      
-        z = distance*np.sin(theta)                                                    
-                                                                                      
-        pairs = np.zeros([len(theta), 2, 3])                                          
-        pairs[:,1,:] = np.vstack([x, y, z]).T                                         
-                                                                                      
+            np.random.shuffle(temp)
+            theta = theta + [temp]
+        theta = np.hstack(theta)
+        np.random.shuffle(theta)
+
+
+        x = distance*np.cos(theta)
+        y = np.zeros(len(theta))
+        z = distance*np.sin(theta)
+
+        pairs = np.zeros([len(theta), 2, 3])
+        pairs[:,1,:] = np.vstack([x, y, z]).T
+
         return pairs
 
     @staticmethod
@@ -698,18 +687,18 @@ class ManualControlMulti(Sequence, Window):
 
         '''
 
-        # Choose a random sequence of points on the edge of a circle of radius 
+        # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
         theta = np.random.rand(length)*2*np.pi
         x = distance*np.cos(theta)
         z = distance*np.sin(theta)
-        
+
         # Join start and end points together in a [trial x coordinate x start/end]
         # array (fill in zeros for endpoint y values)
         targs = np.zeros([length, 3, 3])
         targs[:,1,0] = x
         targs[:,1,2] = z
-        
+
         return targs
 
     @staticmethod
@@ -744,7 +733,7 @@ class ManualControlMulti(Sequence, Window):
 
         '''
 
-        # Choose a random sequence of points on the edge of a circle of radius 
+        # Choose a random sequence of points on the edge of a circle of radius
         # "distance" and a corresponding set of points on circle of raidus 2*distance
         theta = np.random.rand(length)*2*np.pi
         x = distance*np.cos(theta)
@@ -759,7 +748,7 @@ class ManualControlMulti(Sequence, Window):
         outertargs = np.zeros([length, 3])
         outertargs[:,0] = x2
         outertargs[:,2] = z2
-        
+
         # Join start and end points together in a [trial x coordinate x start/end]
         # array (fill in zeros for endpoint y values)
         targs = np.zeros([length, 3, 3])
@@ -810,9 +799,9 @@ class ManualControlMulti(Sequence, Window):
 
         '''
 
-       # Choose a random sequence of points on the edge of a circle of radius 
+       # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
-        
+
         theta = []
         for i in range(nblocks):
             temp = np.arange(0, 2*np.pi, 2*np.pi/ntargets)
@@ -835,7 +824,7 @@ class ManualControlMulti(Sequence, Window):
         outertargs = np.zeros([nblocks*ntargets, 3])
         outertargs[:,0] = x2
         outertargs[:,2] = z2
-        
+
         # Join start and end points together in a [trial x coordinate x start/end]
         # array (fill in zeros for endpoint y values)
         targs = np.zeros([nblocks*ntargets, 3, 3])
@@ -886,9 +875,9 @@ class ManualControlMulti(Sequence, Window):
 
         '''
 
-       # Choose a random sequence of points on the edge of a circle of radius 
+       # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
-        
+
         theta = []
         for i in range(nblocks):
             temp = np.arange(0, 2*np.pi, 2*np.pi/ntargets)
@@ -898,7 +887,7 @@ class ManualControlMulti(Sequence, Window):
 
         x = distance*np.cos(theta)
         z = distance*np.sin(theta)
-        
+
         # Join start and end points together in a [trial x coordinate x start/end]
         # array (fill in zeros for endpoint y values)
         targs = np.zeros([nblocks*ntargets, 3, 3])
@@ -933,9 +922,9 @@ class ManualControlMulti(Sequence, Window):
         targs : [length x 3 x 3] array of pairs of target locations
         '''
 
-       # Choose a random sequence of points on the edge of a circle of radius 
+       # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
-        
+
         theta = []
         for i in range(nblocks):
             temp = np.arange(startangle, startangle+(2*np.pi), 2*np.pi/ntargets)
@@ -945,7 +934,7 @@ class ManualControlMulti(Sequence, Window):
 
         x = distance*np.cos(theta)
         z = distance*np.sin(theta)
-        
+
         # Join start and end points together in a [trial x coordinate x start/end]
         # array (fill in zeros for endpoint y values)
         targs = np.zeros([nblocks*ntargets, 2, 3])
@@ -1019,12 +1008,12 @@ class ManualControlMulti(Sequence, Window):
         boundaries: 6 element Tuple
             The limits of the allowed target locations (-x, x, -z, z)
         distance : float
-            The distance in cm between the targets in a pair.        
+            The distance in cm between the targets in a pair.
 
         Returns
         -------
         list
-            Each element of the list is an array of shape (seq_len, 3) indicating the target 
+            Each element of the list is an array of shape (seq_len, 3) indicating the target
             positions to be acquired for the trial.
         '''
         xmin, xmax, zmin, zmax = boundaries
@@ -1109,17 +1098,17 @@ class ManualControlMulti(Sequence, Window):
         # Create list of origin targets
         pts1 = np.zeros([length,3])
 
-        # Choose a random sequence of points on the edge of a circle of radius 
+        # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
         theta = np.random.rand(length)*2*np.pi
         x = distance*np.cos(theta)
         z = distance*np.sin(theta)
-        
+
         # Join start and end points together in a [trial x coordinate x start/end]
         # array (fill in zeros for endpoint y values)
         pts2 = np.array([x,np.zeros(length),z]).transpose([1,0])
         pairs = np.array([pts1, pts2]).transpose([1,2,0])
-        
+
         return pairs
 
     @staticmethod
@@ -1132,14 +1121,14 @@ class ManualControlMulti(Sequence, Window):
         Parameters
         ----------
         perc_z : float
-            The percentage of the z axis to be used for targets 
+            The percentage of the z axis to be used for targets
         length : int
             The number of target pairs in the sequence.
         boundaries: 6 element Tuple
             The limits of the allowed target locations (-x, x, -z, z)
         distance : float
             The distance in cm between the targets in a pair.
-        
+
 
         Returns
         -------
@@ -1153,24 +1142,24 @@ class ManualControlMulti(Sequence, Window):
         # Create list of origin targets
         pts1 = np.zeros([length,3])
 
-        # Choose a random sequence of points on the edge of a circle of radius 
+        # Choose a random sequence of points on the edge of a circle of radius
         # "distance"
-        
-        #Added PK -- to confine z value according to entered boundaries: 
+
+        #Added PK -- to confine z value according to entered boundaries:
         theta_max = math.asin(boundaries[3]/distance*(perc_z)/float(100))
         theta = (np.random.rand(length)-0.5)*2*theta_max
-        
+
         #theta = np.random.rand(length)*2*np.pi
-        
+
         x = distance*np.cos(theta)*(np.ones(length)*-1)**np.random.randint(1,3,length)
         z = distance*np.sin(theta)
-        
+
         # Join start and end points together in a [trial x coordinate x start/end]
         # array (fill in zeros for endpoint y values)
         pts2 = np.array([x,np.zeros(length),z]).transpose([1,0])
 
         pairs = np.array([pts1, pts2]).transpose([1,2,0])
-        
+
         return pairs
 
     @staticmethod
@@ -1198,7 +1187,7 @@ class ManualControlMulti(Sequence, Window):
         # Create list of origin targets
         pts1 = np.zeros([length,3])
 
-        # Choose a random sequence of points on the edge of a circle of radius 
+        # Choose a random sequence of points on the edge of a circle of radius
         # "distance", and matching set with radius distance*2
         theta = np.random.rand(length*10)*2*np.pi
         x1 = distance*np.cos(theta)
@@ -1207,13 +1196,13 @@ class ManualControlMulti(Sequence, Window):
         z2 = distance*2*np.sin(theta)
 
         mask = np.logical_and(np.logical_and(x2>=boundaries[0],x2<=boundaries[1]),np.logical_and(z2>=boundaries[2],z2<=boundaries[3]))
-        
+
         # Join start and end points together in a [trial x coordinate x start/end]
         # array (fill in zeros for endpoint y values)
         pts2 = np.array([x1[mask][:length], np.zeros(length), z1[mask][:length]]).transpose([1,0])
         pts3 = np.array([x2[mask][:length], np.zeros(length), z2[mask][:length]]).transpose([1,0])
         targs = np.array([pts1, pts2, pts3]).transpose([1,2,0])
-        
+
         return targs
 
 class JoystickMulti(ManualControlMulti):
@@ -1245,7 +1234,7 @@ class JoystickMulti(ManualControlMulti):
         if len(sec) < 2:
             sec = '0'+sec
         self.reportstats['Time Of Last Reward'] = str(np.int(np.floor(rt/60))) + ':' + sec
-    
+
     def _test_trial_complete(self, ts):
         if self.target_index==self.chain_length-1 :
             if self.random_rewards:
@@ -1254,9 +1243,9 @@ class JoystickMulti(ManualControlMulti):
                     self.rand_reward_set_flag =1;
                     #print self.reward_time, self.rand_reward_set_flag
             return self.target_index==self.chain_length-1
-        
+
     def _test_reward_end(self, ts):
-        #When finished reward, reset flag. 
+        #When finished reward, reset flag.
         if self.random_rewards:
             if ts > self.reward_time:
                 self.rand_reward_set_flag = 0;
@@ -1279,10 +1268,10 @@ class JoystickMulti(ManualControlMulti):
 
 
             pt[0]=1-pt[0]; #Switch L / R axes
-            calib = [0.5,0.5] #Sometimes zero point is subject to drift this is the value of the incoming joystick when at 'rest' 
+            calib = [0.5,0.5] #Sometimes zero point is subject to drift this is the value of the incoming joystick when at 'rest'
             # calib = [ 0.487,  0.   ]
 
-            #if self.joystick_method==0:                
+            #if self.joystick_method==0:
             if self.joystick_method==0:
                 pos = np.array([(pt[0]-calib[0]), 0, calib[1]-pt[1]])
                 pos[0] = pos[0]*36
@@ -1299,7 +1288,7 @@ class JoystickMulti(ManualControlMulti):
                     self.current_pt = self.last_pt
 
                 #self.current_pt = self.current_pt + (np.array([np.random.rand()-0.5, 0., np.random.rand()-0.5])*self.joystick_speed)
-                
+
                 if self.current_pt[0] < -25: self.current_pt[0] = -25
                 if self.current_pt[0] > 25: self.current_pt[0] = 25
                 if self.current_pt[-1] < -14: self.current_pt[-1] = -14
@@ -1325,7 +1314,7 @@ class JoystickMulti2DWindow(JoystickMulti, WindowDispl2D):
     def _start_wait(self):
         self.wait_time = 0.
         super(JoystickMulti2DWindow, self)._start_wait()
-        
+
     def _test_start_trial(self, ts):
         return ts > self.wait_time and not self.pause
 
