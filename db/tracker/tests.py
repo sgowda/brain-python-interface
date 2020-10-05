@@ -256,8 +256,12 @@ class TestVisualFeedbackTask(TestCase):
                       params=dict(window_size=(480, 240)), seq=seq_rec, seq_params=seq_params,
                       saveid=saveid)
 
-        tracker = tasktrack.Track.get_instance()
-        tracker.runtask(**task_start_data)
+        try:
+            import pygame
+            tracker = tasktrack.Track.get_instance()
+            tracker.runtask(**task_start_data)
+        except:
+            print("Skipping test due to pygame missing")
 
 
 class TestTaskStartStop(TestCase):
