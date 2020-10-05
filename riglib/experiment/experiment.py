@@ -16,14 +16,17 @@ import numpy as np
 from collections import OrderedDict
 
 from . import traits
+from riglib import fsm
 from riglib.fsm import FSMTable, StateTransitions, ThreadedFSM
 
 try:
     os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
     import pygame
+    pygame_avail = True
 except ImportError:
     import warnings
     warnings.warn("experiment.py: Cannot import 'pygame'")
+    pygame_avail = False
 
 
 min_per_hour = 60.
@@ -139,7 +142,10 @@ class Experiment(ThreadedFSM, traits.HasTraits):
         self.dtype = []
 
         self.cycle_count = 0
-        self.clock = pygame.time.Clock()
+        if pygame_avail:
+            self.clock = pygame.time.Clock()
+        else:
+            self.clock = fsm.Clock()
 
         self.pause = False
 
