@@ -398,6 +398,9 @@ class Experiment(ThreadedFSM, traits.HasTraits):
     def online_report(self):
         return self.reportstats
 
+    def get_state(self):
+        return self.state
+
     @classmethod
     def offline_report(self, event_log):
         '''Returns an ordered dict with report stats to be displayed when past session of this task is selected

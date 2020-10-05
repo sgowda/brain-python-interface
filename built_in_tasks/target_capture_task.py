@@ -9,12 +9,6 @@ import traceback
 from collections import OrderedDict
 
 from riglib.experiment import traits, Sequence, FSMTable, StateTransitions
-from riglib.stereo_opengl.window import Window, FPScontrol, WindowDispl2D
-from riglib.stereo_opengl.primitives import Cylinder, Plane, Sphere, Cube
-from riglib.stereo_opengl.models import FlatMesh, Group
-from riglib.stereo_opengl.textures import Texture, TexModel
-from riglib.stereo_opengl.render import stereo, Renderer
-from riglib.stereo_opengl.utils import cloudy_tex
 from riglib.stereo_opengl import ik
 
 from .target_graphics import *
@@ -241,11 +235,8 @@ class ScreenTargetCapture(TargetCapture, Window):
 
     limit2d = 1
 
-    sequence_generators = ['centerout_2D_discrete', 'centerout_2D_discrete_offset', 'point_to_point_3D', 'centerout_3D', 'centerout_3D_cube', 'centerout_2D_discrete_upper','centerout_2D_discrete_rot', 'centerout_2D_discrete_multiring',
-        'centerout_2D_discrete_randorder', 'centeroutback_2D', 'centeroutback_2D_farcatch', 'centeroutback_2D_farcatch_discrete',
-        'outcenterout_2D_discrete', 'outcenter_2D_discrete', 'rand_target_sequence_3d', 'rand_target_sequence_2d', 'rand_target_sequence_2d_centerout',
-        'rand_target_sequence_2d_partial_centerout', 'rand_multi_sequence_2d_centerout2step', 'rand_pt_to_pt',
-        'centerout_2D_discrete_far', 'centeroutback_2D_v2','centerout_2D_discrete_eyetracker_calibration']
+    sequence_generators = ['centerout_2D_discrete']
+
     is_bmi_seed = True
     _target_color = RED
 
