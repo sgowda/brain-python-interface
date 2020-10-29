@@ -1,5 +1,5 @@
 '''
-Classes for BMI decoding using the Kalman filter. 
+Classes for BMI decoding using the Kalman filter.
 '''
 
 import numpy as np
@@ -13,7 +13,7 @@ class KalmanFilter(bmi.GaussianStateHMM):
     """
     Low-level KF, agnostic to application
 
-    Model: 
+    Model:
        x_{t+1} = Ax_t + w_t;   w_t ~ N(0, W)
            y_t = Cx_t + q_t;   q_t ~ N(0, Q)
     """
@@ -22,7 +22,11 @@ class KalmanFilter(bmi.GaussianStateHMM):
 
     def __init__(self, A=None, W=None, C=None, Q=None, is_stochastic=None):
         '''
-        Constructor for KalmanFilter    
+        Constructor for KalmanFilter
+
+        KF model:
+            x_{t+1} = A*x_t + B*u_t + Gaussian process noise
+            y_t = C*x_t + observation noise
 
         Parameters
         ----------
@@ -35,7 +39,7 @@ class KalmanFilter(bmi.GaussianStateHMM):
         Q : np.mat, optional
             Model of observation noise covariance
         is_stochastic : np.array, optional
-            Array of booleans specifying for each state whether it is stochastic. 
+            Array of booleans specifying for each state whether it is stochastic.
             If 'None' specified, all states are assumed to be stochastic
 
         Returns
@@ -56,7 +60,7 @@ class KalmanFilter(bmi.GaussianStateHMM):
                 self.is_stochastic = np.ones(n_states, dtype=bool)
             else:
                 self.is_stochastic = is_stochastic
-            
+
             self.state_noise = bmi.GaussianState(0.0, self.W)
             self.obs_noise = bmi.GaussianState(0.0, self.Q)
             self._pickle_init()
@@ -72,7 +76,7 @@ class KalmanFilter(bmi.GaussianStateHMM):
         self.alt = nS < self.C.shape[0] # No. of states less than no. of observations
         attrs = list(self.__dict__.keys())
         if not 'C_xpose_Q_inv_C' in attrs:
-            C, Q = self.C, self.Q 
+            C, Q = self.C, self.Q
             self.C_xpose_Q_inv = C.T * np.linalg.pinv(Q)
             self.C_xpose_Q_inv_C = C.T * np.linalg.pinv(Q) * C
 
@@ -86,6 +90,10 @@ class KalmanFilter(bmi.GaussianStateHMM):
         '''
         Predict the observations based on the model parameters:
             y_est = C*x_t + Q
+
+        This function is not used in this implementation of the Kalman filter because of the
+        change in parameterization. It is left here in case it is useful to post-hoc analysis
+        of data collected.
 
         Parameters
         ----------
@@ -101,24 +109,31 @@ class KalmanFilter(bmi.GaussianStateHMM):
 
     def _forward_infer(self, st, obs_t, Bu=None, u=None, x_target=None, F=None, obs_is_control_independent=True, **kwargs):
         '''
-        Estimate p(x_t | ..., y_{t-1}, y_t)
+        Estimate p(x_t | ..., y_{t-1}, y_t) if x_t and y_t are goverened by the dynamics
+
+            x_{t+1} = A*x_t + B*u_t + Gaussian process noise
+            y_t = C*x_t + observation noise
 
         Parameters
         ----------
         st : GaussianState
             Current estimate (mean and cov) of hidden state
         obs_t : np.mat of shape (N, 1)
-             ARG_DESCR
-        Bu : DATA_TYPE, optional, default=None
-             ARG_DESCR
-        u : DATA_TYPE, optional, default=None
-             ARG_DESCR
-        x_target : DATA_TYPE, optional, default=None
-             ARG_DESCR
+            Observation vector used by the Kalman filter to infer the next state
+        Bu : np.mat of shape (number of states, 1), optional, default=None
+            A "control input" on the state of the form B*u_t
+        u : column matrix of shape (_, 1), optional, default=None
+            Control input specified in the "control space". Assumes the decoder has a "B" matrix attribute
+        x_target : column matrix of shape (_, 1), optional, default=None
+            The optimal state for the filter output to be in at the current time. This is an "oracle" input
+            used for any re-training of system parameters, i.e. CLDA. Vector length must match dimension of state vector
         obs_is_control_independent : bool, optional, default=True
-             ARG_DESCR
+            If False, the control input is incorporated into the state space model forward prediction step.
+            If True, the control input is added independently to the final output.
+            [historical note: Doesn't make much difference, but this code was created by merging two algorithms
+            that performed this step differently]
         kwargs : optional kwargs
-            ARG_DESCR
+            Catch all extra arguments to keep the API consistent with other filter algorithms
 
         Returns
         -------
@@ -127,57 +142,55 @@ class KalmanFilter(bmi.GaussianStateHMM):
 
         '''
         using_control_input = (Bu is not None) or (u is not None) or (x_target is not None)
+        C, Q = self.C, self.Q
+
+        # 1) Run the "prediction" step of the Kalman filter
+        # x_{t+1|t} = A * x_{t|t} + B*u_t
+        # P_{t+1|t} = A * P_{t|t} * A.T + W
         pred_state = self._ssm_pred(st, target_state=x_target, Bu=Bu, u=u, F=F)
 
-        C, Q = self.C, self.Q
         P = pred_state.cov
 
+        # 2) calculate the Kalman gain and associated matrices used to "correct" the prediction in step 1
         K = self._calc_kalman_gain(P)
+
+        # calculate K_t * C using the "alternate" model parameters (C^T * Q^-1) and (C^T * Q^-1 * C)
+        # see equation (3.5.2) on p. 38 in https://www2.eecs.berkeley.edu/Pubs/TechRpts/2015/EECS-2015-182.pdf
+        # for derivation
         I = np.mat(np.eye(self.C.shape[1]))
         D = self.C_xpose_Q_inv_C
         KC = P*(I - D*P*(I + D*P).I)*D
-        F = (I - KC)*self.A
 
+        # 3) "Correction" step. Update the forward prediction {t+1 | t} with the observation at time {t+1}
+        # x_{t|t} = (I - KC)*A*x_{t-1|t-1} + K*y_t
+        # P_{t|t} = (I - KC) * P_{t-1|t-1} * (I - KC).T
+        # See (3.3.1) on p.26 of https://www2.eecs.berkeley.edu/Pubs/TechRpts/2015/EECS-2015-182.pdf
+        # for mapping to typical KF equations
         post_state = pred_state
-
         if obs_is_control_independent and using_control_input:
             post_state.mean += -KC*self.A*st.mean + K*obs_t
         else:
             post_state.mean += -KC*pred_state.mean + K*obs_t
 
-        post_state.cov = (I - KC) * P 
+        post_state.cov = (I - KC) * P
 
         return post_state
 
-    def set_state_cov(self, n_steps):
-        C, Q = self.C, self.Q
-        A, W = self.A, self.W
-        P = self.state.cov
-        for k in range(n_steps):
-            
-            P = A*P*A.T + W
-
-            K = self._calc_kalman_gain(P)
-            I = np.mat(np.eye(self.C.shape[1]))
-            D = self.C_xpose_Q_inv_C
-            KC = P*(I - D*P*(I + D*P).I)*D
-            P = (I - KC) * P 
-
-        return P
-
     def _calc_kalman_gain(self, P):
         '''
-        Calculate Kalman gain using the 'alternate' definition
+        Calculate Kalman gain using the "alternate" model parameters (C^T * Q^-1) and (C^T * Q^-1 * C).
+        See equation (3.5.2)) on p. 38 in https://www2.eecs.berkeley.edu/Pubs/TechRpts/2015/EECS-2015-182.pdf
+        for derivation
 
         Parameters
         ----------
         P : np.matrix
-            Prediciton covariance matrix, i.e., cov(x_{t+1} | y_1, \cdots, y_t)
+            Prediciton covariance matrix, i.e., cov(x_{t+1} | y_1, ..., y_t)
 
         Returns
         -------
         K : np.matrix
-            Kalman gain matrix for the input next state prediciton covariance.        
+            Kalman gain matrix for the input next state prediciton covariance.
         '''
         nX = P.shape[0]
         I = np.mat(np.eye(nX))
@@ -187,24 +200,47 @@ class KalmanFilter(bmi.GaussianStateHMM):
         return K
 
     def get_sskf(self, tol=1e-15, return_P=False, dtype=np.array, max_iter=4000,
-        verbose=False, return_Khist=False, alt=True):
-        """Calculate the steady-state KF matrices
+        verbose=False, return_Khist=False):
+        """Calculate the steady-state KF matrices.
+        Calculates the Kalman gain repeatedly (which is independent of the observation vector, in this model)
+        until it converges to within the specified tolerance.
 
-        value of P returned is the posterior error cov, i.e. P_{t|t}
+        Assumes static model parameters (A, W, C, Q).
 
         Parameters
         ----------
+        tol : float, optional, default=1e-15
+            Floating point tolerance. Kalman gain determined to converge if the l2 norm of the difference
+            is less than this value
+        dtype : np.array or np.mat
+            Specify whether you want the outputs as np.array objects or np.mat objects since they have different
+            arithmetic behaviors
+        max_iter : int, optional, default=4000
+            Maximum number of Kalman gain iterations to run. Avoids the possibility of non-convergence/infinite-loops
+        verbose: bool, optional, default=False
+            Print some additional messgaes
+
 
         Returns
-        -------        
-        """ 
+        -------
+        F : np.array or np.mat
+            State transition matrix defined by Kalman filter with convergent constant parameters.
+            See equation (3.3.1) on p. 26 of https://www2.eecs.berkeley.edu/Pubs/TechRpts/2015/EECS-2015-182.pdf
+            for more detail.
+        K : np.array or np.mat
+            Steady-state Kalman gain
+        P : [optional, if return_P is True] np.array or np.mat
+            Posterior error cov, i.e. P_{t|t}, at the last time step
+        K_hist : [optional, if return_Khist is True] list
+            History of Kalman gain matrices
+        """
         A, W, C, Q = np.mat(self.A), np.mat(self.W), np.mat(self.C), np.mat(self.Q)
 
         nS = A.shape[0]
         P = np.mat(np.zeros([nS, nS]))
         I = np.mat(np.eye(nS))
 
-        D = self.C_xpose_Q_inv_C 
+        D = self.C_xpose_Q_inv_C
 
         last_K = np.mat(np.ones(C.T.shape))*np.inf
         K = np.mat(np.ones(C.T.shape))*0
@@ -214,7 +250,7 @@ class KalmanFilter(bmi.GaussianStateHMM):
         iter_idx = 0
         last_P = None
         while np.linalg.norm(K-last_K) > tol and iter_idx < max_iter:
-            P = A*P*A.T + W 
+            P = A*P*A.T + W
             last_K = K
             K = self._calc_kalman_gain(P)
             K_hist.append(K)
@@ -222,12 +258,12 @@ class KalmanFilter(bmi.GaussianStateHMM):
             last_P = P
             P -= KC*P;
             iter_idx += 1
-        if verbose: 
-            print(("Converged in %d iterations--error: %g" % (iter_idx, np.linalg.norm(K-last_K)))) 
-    
+        if verbose:
+            print(("Converged in %d iterations--error: %g" % (iter_idx, np.linalg.norm(K-last_K))))
+
         n_state_vars, n_state_vars = A.shape
         F = (np.mat(np.eye(n_state_vars, n_state_vars)) - KC) * A
-    
+
         if return_P and return_Khist:
             return dtype(F), dtype(K), dtype(last_P), K_hist
         elif return_P:
@@ -237,71 +273,6 @@ class KalmanFilter(bmi.GaussianStateHMM):
         else:
             return dtype(F), dtype(K)
 
-
-    def get_kalman_gain_seq(self, N=1000, tol=1e-10, verbose=False):
-        '''
-        Calculate K_t for times {0, 1, ..., N}
-
-        Parameters
-        ----------
-        N : int, optional
-            Number of steps to calculate Kalman gain for, default = 1000
-        tol : float, optional
-            Tolerance on K matrix convergence, default = 1e-10
-        verbose : bool, optional
-            Print intermediate/debugging information if true, default=False
-
-        Returns
-        -------
-        list
-            [K_0, K_1, ..., K_{N-1}]
-        '''
-        A, W, H, Q = np.mat(self.kf.A), np.mat(self.kf.W), np.mat(self.kf.H), np.mat(self.kf.Q)
-        P = np.mat( np.zeros(A.shape) )
-        K = [None]*N
-        
-        ss_idx = None # index at which K is steady-state (within tol)
-        for n in range(N):
-            if not ss_idx == None and n > ss_idx:
-                K[n] = K[ss_idx]
-            else:
-                P = A*P*A.T + W 
-                K[n] = (P*H.T)*linalg.pinv(H*P*H.T + Q);
-                P -= K[n]*H*P;
-                if n > 0 and np.linalg.norm(K[n] - K[n-1]) < tol: 
-                    ss_idx = n
-                    if verbose: 
-                        print(("breaking after %d iterations" % n))
-
-        return K, ss_idx
-
-    def get_kf_system_mats(self, T):
-        """
-        KF system matrices
-
-        x_{t+1} = F_t*x_t + K_t*y_t 
-
-        Parameters
-        ----------
-        T : int 
-            Number of system iterations to calculate (F_t, K_t)
-
-        Returns
-        -------
-        tuple of lists
-            Each element of the tuple is (F_t, K_t) for a given 't'
-
-        """
-        F = [None]*T
-        K, ss_idx = self.get_kalman_gain_seq(N=T, verbose=False)
-        nX = self.kf.A.shape[0]
-        I = np.mat(np.eye(nX))
-        
-        for t in range(T):
-            if t > ss_idx: F[t] = F[ss_idx]
-            else: F[t] = (I - K[t]*self.kf.H)*self.kf.A
-        
-        return F, K
 
     @classmethod
     def MLE_obs_model(self, hidden_state, obs, include_offset=True, drives_obs=None,
@@ -316,17 +287,17 @@ class KalmanFilter(bmi.GaussianStateHMM):
             A row of all 1's is added as the last row of hidden_state if one is not already present
 
         Returns
-        -------        
+        -------
         """
         assert hidden_state.shape[1] == obs.shape[1], "different numbers of time samples: %s vs %s" % (str(hidden_state.shape), str(obs.shape))
-    
+
         if isinstance(hidden_state, np.ma.core.MaskedArray):
-            mask = ~hidden_state.mask[0,:] # NOTE THE INVERTER 
+            mask = ~hidden_state.mask[0,:] # NOTE THE INVERTER
             inds = np.nonzero([ mask[k]*mask[k+1] for k in range(len(mask)-1)])[0]
-    
+
             X = np.mat(hidden_state[:,mask])
             T = len(np.nonzero(mask)[0])
-    
+
             Y = np.mat(obs[:,mask])
             if include_offset:
                 if not np.all(X[-1,:] == 1):
@@ -338,11 +309,11 @@ class KalmanFilter(bmi.GaussianStateHMM):
                 if not np.all(X[-1,:] == 1):
                     X = np.vstack([ X, np.ones([1,T]) ])
             Y = np.mat(obs)
-    
+
         n_states = X.shape[0]
         if not drives_obs is None:
             X = X[drives_obs, :]
-            
+
         # ML estimate of C and Q
         if regularizer is None:
             C = np.mat(np.linalg.lstsq(X.T, Y.T)[0].T)
@@ -364,8 +335,8 @@ class KalmanFilter(bmi.GaussianStateHMM):
             C_tmp[:,drives_obs] = C
             C = C_tmp
         return (C, Q)
-    
-    @classmethod 
+
+    @classmethod
     def MLE_state_space_model(self, hidden_state, include_offset=True):
         '''
         Train state space model for KF from fully observed hidden state
@@ -375,18 +346,18 @@ class KalmanFilter(bmi.GaussianStateHMM):
         hidden_state : np.ndarray of shape (N, T)
             N = dimensionality of state vector, T = number of observations
         include_offset : boolean, optional, default=False
-            if True, append a "1" to each state vector to add an offset term into the 
+            if True, append a "1" to each state vector to add an offset term into the
             regression
 
         Returns
-        -------        
+        -------
         A : np.ndarray of shape (N, N)
         W : np.ndarray of shape (N, N)
         '''
         X = hidden_state
         T = hidden_state.shape[1]
         if include_offset:
-            X = np.vstack([ X, np.ones([1,T]) ])        
+            X = np.vstack([ X, np.ones([1,T]) ])
         X1 = X[:,:-1]
         X2 = X[:,1:]
         A = np.linalg.lstsq(X1.T, X2.T)[0].T
@@ -395,11 +366,11 @@ class KalmanFilter(bmi.GaussianStateHMM):
 
     def set_steady_state_pred_cov(self):
         '''
-        Calculate the steady-state prediction covariance and set the current state prediction covariance to the steady-state value
+        Calculate the steady-state prediction covariance and set the current state
+        prediction covariance to the steady-state value
         '''
-
         A, W, C, Q = np.mat(self.A), np.mat(self.W), np.mat(self.C), np.mat(self.Q)
-        D = self.C_xpose_Q_inv_C 
+        D = self.C_xpose_Q_inv_C
         nS = A.shape[0]
         P = np.mat(np.zeros([nS, nS]))
         I = np.mat(np.eye(nS))
@@ -420,20 +391,6 @@ class KalmanFilter(bmi.GaussianStateHMM):
         F = (I - KC)*A
         self._init_state(init_state=self.state.mean, init_cov=P)
 
-    def get_K_null(self):
-        '''
-        $$y_{null} = K_{null} * y_t$$ gives the "null" component of the spike inputs, i.e. $$K_t*y_{null} = 0_{N\times 1}$$
-        Parameters
-        ----------
-
-        Returns
-        -------        
-        '''
-        F, K = self.get_sskf()
-        K = np.mat(K)
-        n_neurons = K.shape[1]
-        K_null = np.eye(n_neurons) - np.linalg.pinv(K) * K
-        return K_null
 
 class KalmanFilterDriftCorrection(KalmanFilter):
     attrs_to_pickle = ['A', 'W', 'C', 'Q', 'C_xpose_Q_inv',
@@ -456,17 +413,17 @@ class KalmanFilterDriftCorrection(KalmanFilter):
         self.noise_cnt = 0
 
         super(KalmanFilterDriftCorrection, self)._init_state()
-        
+
     def _forward_infer(self, st, obs_t, Bu=None, u=None, x_target=None, F=None, obs_is_control_independent=True, **kwargs):
-        
+
         if self.noise_rej:
             if np.sum(obs_t) > self.noise_rej_cutoff:
                 #print np.sum(obs_t), 'rejecting noise!'
-                self.noise_cnt += 1 
+                self.noise_cnt += 1
                 obs_t = np.mat(self.noise_rej_mFR).T
-                
 
-        state = super(KalmanFilterDriftCorrection, self)._forward_infer(st, obs_t, Bu=None, u=None, x_target=None, F=None, 
+
+        state = super(KalmanFilterDriftCorrection, self)._forward_infer(st, obs_t, Bu=None, u=None, x_target=None, F=None,
             obs_is_control_independent=True, **kwargs)
 
         ### Apply Drift Correction ###
@@ -514,7 +471,7 @@ class PCAKalmanFilter(KalmanFilter):
         else:
             post_state.mean += -KC*pred_state.mean + M*K*obs_t + pca_offset
 
-        post_state.cov = (I - KC) * P 
+        post_state.cov = (I - KC) * P
 
         return post_state
 
@@ -533,7 +490,7 @@ class PCAKalmanFilter(KalmanFilter):
         '''
         super(PCAKalmanFilter, self).__setstate__(state)
         self.M = state['M']
-        self.pca_offset = state['pca_offset']        
+        self.pca_offset = state['pca_offset']
 
 class FAKalmanFilter(KalmanFilter):
 
@@ -542,7 +499,7 @@ class FAKalmanFilter(KalmanFilter):
         if hasattr(self, 'FA_kwargs'):
 
             input_type = self.FA_input + '_input'
-        
+
             input_dict['all_input'] = obs_t.copy()
 
             dmn = obs_t - self.FA_kwargs['fa_mu']
@@ -581,14 +538,14 @@ class FAKalmanFilter(KalmanFilter):
             #z = self.FA_kwargs['u_svd'].T*self.FA_kwargs['uut_psi_inv']*dmn
             input_dict['split_input'] = np.vstack((z, main_priv))
             #print input_dict['split_input'].shape
-            
+
             own_pc_trans = np.mat(self.FA_kwargs['own_pc_trans'])*np.mat(dmn)
             input_dict['pca_input'] = own_pc_trans + self.FA_kwargs['fa_mu']
 
             if input_type in list(input_dict.keys()):
                 #print input_type
                 obs_t_mod = input_dict[input_type]
-            else: 
+            else:
                 print(input_type)
                 raise Exception("Error in FA_KF input_type, none of the expected inputs")
         else:
@@ -597,7 +554,7 @@ class FAKalmanFilter(KalmanFilter):
         input_dict['task_input'] = obs_t_mod.copy()
 
 
-        post_state = super(FAKalmanFilter, self)._forward_infer(st, obs_t_mod, Bu=Bu, u=u, target_state=target_state, 
+        post_state = super(FAKalmanFilter, self)._forward_infer(st, obs_t_mod, Bu=Bu, u=u, target_state=target_state,
             obs_is_control_independent=obs_is_control_independent, **kwargs)
 
         self.FA_input_dict = input_dict
@@ -610,12 +567,12 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
     '''
     def __init__(self, *args, **kwargs):
         '''
-        Constructor for KFDecoder   
-        
+        Constructor for KFDecoder
+
         Parameters
         ----------
         *args, **kwargs : see riglib.bmi.bmi.Decoder for arguments
-        
+
         Returns
         -------
         KFDecoder instance
@@ -641,14 +598,14 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
     def init_zscore(self, mFR_curr, sdFR_curr):
         '''
         Initialize parameters for zcoring observations, if that feature is enabled in the decoder object
-        
+
         Parameters
         ----------
         mFR_curr : np.array of shape (N,)
             Current mean estimates (as opposed to potentially old estimates already stored in the decoder)
         sdFR_curr : np.array of shape (N,)
             Current standard deviation estimates (as opposed to potentially old estimates already stored in the decoder)
-        
+
         Returns
         -------
         None
@@ -678,12 +635,12 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
     def __setstate__(self, state):
         """
         Set decoder state after un-pickling. See Decoder.__setstate__, which runs the _pickle_init function at some point during the un-pickling process
-        
+
         Parameters
         ----------
         state : dict
             Variables to set as attributes of the unpickled object.
-        
+
         Returns
         -------
         None
@@ -696,12 +653,12 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
     def plot_K(self, **kwargs):
         '''
         Plot the Kalman gain weights
-        
+
         Parameters
         ----------
         **kwargs : optional kwargs
             These are passed to the plot function (e.g., which rows to plot)
-        
+
         Returns
         -------
         None
@@ -713,15 +670,15 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
     def shuffle(self, shuffle_baselines=False):
         '''
         Shuffle the neural model
-        
+
         Parameters
         ----------
         shuffle_baselines : bool, optional, default = False
             If true, shuffle the estimates of the baseline firing rates in addition to the state-dependent neural tuning parameters.
-        
+
         Returns
         -------
-        None (shuffling is done on the current decoder object)        
+        None (shuffling is done on the current decoder object)
 
         '''
         # generate random permutation
@@ -752,7 +709,7 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
 
     def change_binlen(self, new_binlen, screen_update_rate=60.0):
         '''
-        Function to change the binlen of the KFDecoder analytically. 
+        Function to change the binlen of the KFDecoder analytically.
 
         Parameters
         ----------
@@ -793,7 +750,7 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
         Create an SSKFDecoder object based on KalmanFilter parameters in this KFDecoder object
         '''
         from . import sskfdecoder
-        self.filt = sskfdecoder.SteadyStateKalmanFilter(A=self.filt.A, W=self.filt.W, C=self.filt.C, Q=self.filt.Q) 
+        self.filt = sskfdecoder.SteadyStateKalmanFilter(A=self.filt.A, W=self.filt.W, C=self.filt.C, Q=self.filt.Q)
 
     def subselect_units(self, units):
         '''
@@ -803,9 +760,9 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
         units : string or np.ndarray of shape (N,2)
             The units which should be KEPT in the decoder
 
-        Returns 
+        Returns
         -------
-        KFDecoder 
+        KFDecoder
             New KFDecoder object using only a subset of the cells of the original KFDecoder
         '''
         # Parse units into list of indices to keep
@@ -815,7 +772,7 @@ class KFDecoder(bmi.BMI, bmi.Decoder):
         #self._save_new_dec(dec_new, '_subset')
 
 def project_Q(C_v, Q_hat):
-    """ 
+    """
     Deprecated! See clda.KFRML_IVC
     """
     print("projecting!")
@@ -851,17 +808,17 @@ def project_Q(C_v, Q_hat):
         S_star_inv = Q_hat + U*C_fn(nu)*V
         #if return_type == 'cost':
         #    print C_v.T * S_star_inv * C_v
-    
+
         if np.any(np.diag(C) == 0):
             S_star = S_star_inv.I
         else:
             C_inv = C.I
             S_star = Q_hat_inv - Q_hat_inv * U * (C_inv + V*Q_hat_inv*U).I*V * Q_hat_inv;
-        
+
         # log-determinant using LU decomposition, required if Q is large, i.e. lots of simultaneous observations
         cost = -np.log(np.linalg.det(S_star_inv))
         #cost = -np.prod(np.linalg.slogdet(S_star_inv))
-        
+
         # TODO gradient dimension needs to be the same as nu
         #grad = -np.array([np.trace(S_star*U[:,0] * c_scalars[0] * V[0,:]) for k in range(len(nu))])
         #grad = -1e-4*np.array([np.trace(S_star*A[0]), np.trace(S_star*A[1]), np.trace(S_star*A[2])])
@@ -871,12 +828,12 @@ def project_Q(C_v, Q_hat):
         hess = np.mat([[np.trace(S*A_1*S*A_1), np.trace(S*A_2*S*A_1), np.trace(S*A_3*S*A_1)],
                        [np.trace(S*A_1*S*A_2), np.trace(S*A_2*S*A_2), np.trace(S*A_3*S*A_2)],
                        [np.trace(S*A_1*S*A_3), np.trace(S*A_2*S*A_3), np.trace(S*A_3*S*A_3)]])
-    
+
         #grad = hess*np.mat(grad.reshape(-1,1))
         #log = logging.getLogger()
         #print "nu = %s, cost = %g, grad=%s" % (nu, cost, grad)
         #log.warning("nu = %s, cost = %g, grad=%s" % (nu, cost, grad))
-    
+
         if return_type == 'cost':
             return cost
         elif return_type == 'grad':
